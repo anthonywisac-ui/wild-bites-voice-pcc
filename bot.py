@@ -1,4 +1,4 @@
-# bot.py
+# bot.py - FINAL WORKING VERSION
 import os
 import sys
 from dotenv import load_dotenv
@@ -20,10 +20,6 @@ load_dotenv()
 logger.remove()
 logger.add(sys.stdout, level="INFO")
 
-# Silence the noisy data-channel warnings (optional)
-logger.level("WARN")
-logger.add(lambda _: None, level="ERROR", filter=lambda r: "Data channel not ready" in r["message"])
-
 SYSTEM_PROMPT = """You are Alex, a friendly restaurant voice assistant.
 Keep responses under 25 words. Ask one question at a time.
 Start by greeting the caller and asking for their order."""
@@ -37,7 +33,6 @@ async def run_bot(webrtc_connection):
             audio_in_enabled=True,
             audio_out_enabled=True,
             vad_analyzer=SileroVADAnalyzer(),
-            # Increase audio timeout to avoid warnings
             audio_in_timeout_secs=30.0,
         ),
     )
