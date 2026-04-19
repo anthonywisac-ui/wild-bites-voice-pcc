@@ -1,8 +1,8 @@
 """
-Wild Bites Voice Ordering Bot — Pipecat Cloud
-==============================================
+Wild Bites Voice Ordering Bot — Pipecat Cloud (v1.0 API)
+=========================================================
 WhatsApp Business Calling API voice bot.
-Deploy target: Pipecat Cloud (Daily.co WebRTC infrastructure)
+Updated for Pipecat 1.0 universal LLMContext API.
 Services: Deepgram (STT+TTS) + Groq (LLM)
 """
 
@@ -16,15 +16,13 @@ from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
-from pipecat.runner.utils import parse_telephony_websocket
-from pipecat.runner.run import main as runner_main
 
 load_dotenv()
 
@@ -73,7 +71,7 @@ Do not invent menu items. If off-topic, politely redirect to ordering.
 
 
 async def run_bot(transport: SmallWebRTCTransport):
-    """Main bot pipeline - called by Pipecat Cloud per connection."""
+    """Main bot pipeline using Pipecat 1.0 universal API."""
     logger.info("Starting Wild Bites voice bot")
 
     stt = DeepgramSTTService(
@@ -92,8 +90,8 @@ async def run_bot(transport: SmallWebRTCTransport):
     )
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    context = OpenAILLMContext(messages)
-    context_aggregator = llm.create_context_aggregator(context)
+    context = LLMContext(messages=messages)
+    context_aggregator = LLMContextAggregatorPair(context)
 
     pipeline = Pipeline([
         transport.input(),
@@ -116,11 +114,14 @@ async def run_bot(transport: SmallWebRTCTransport):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Caller connected — triggering greeting")
+        # Append a priming system message to make the LLM greet
         messages.append({
             "role": "system",
             "content": "Greet the caller warmly and ask what they'd like to order.",
         })
-        await task.queue_frames([context_aggregator.user().get_context_frame()])
+        # Use the new LLMContextFrame approach
+        from pipecat.frames.frames import LLMRunFrame
+        await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
@@ -143,7 +144,3 @@ async def bot(args):
         ),
     )
     await run_bot(transport)
-
-
-if __name__ == "__main__":
-    runner_main()
