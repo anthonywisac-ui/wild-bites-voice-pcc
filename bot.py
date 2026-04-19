@@ -1,4 +1,4 @@
-"""Wild Bites Voice Ordering Bot — Pipecat Cloud."""
+"""Wild Bites Voice Ordering Bot — Pipecat Cloud + WhatsApp."""
 
 import os
 import sys
@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -17,13 +18,18 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
+from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+from pipecatcloud import PipecatSessionArguments, SmallWebRTCSessionManager
+from pipecatcloud.agent import SmallWebRTCSessionArguments
 
-load_dotenv()
+load_dotenv(override=True)
 
 logger.remove()
 logger.add(sys.stdout, level="INFO")
 
+# Global session manager — required for Pipecat Cloud WhatsApp 2-step flow
+session_manager = SmallWebRTCSessionManager(timeout_seconds=120)
 
 SYSTEM_PROMPT = """You are Alex, the friendly voice assistant for Wild Bites Restaurant.
 You take orders over the phone via WhatsApp calling.
@@ -44,7 +50,7 @@ PERSONALITY: Warm, friendly, upbeat. SHORT responses (under 25 words, spoken).
 No markdown or emojis. Ask ONE question at a time.
 
 CALL FLOW:
-1. Greet warmly.
+1. Greet: "Hi! Thanks for calling Wild Bites. I'm Alex. What can I get for you?"
 2. Take order. Confirm.
 3. Suggest ONE upsell.
 4. Delivery or pickup?
@@ -52,14 +58,14 @@ CALL FLOW:
 6. Name.
 7. Cash or card-on-delivery?
 8. Repeat order + total + ETA.
-9. Confirm: "Order confirmed! WhatsApp message coming shortly. Thanks!"
+9. "Order confirmed! WhatsApp message coming shortly. Thanks!"
 
 Do not invent menu items. Redirect off-topic to ordering.
 """
 
 
-async def run_bot(transport: BaseTransport):
-    """Bot pipeline logic — transport agnostic."""
+async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
+    """Bot pipeline — transport agnostic."""
     logger.info("Starting Wild Bites voice bot")
 
     stt = DeepgramSTTService(
@@ -106,7 +112,6 @@ async def run_bot(transport: BaseTransport):
             "role": "system",
             "content": "Greet the caller warmly and ask what they'd like to order.",
         })
-        from pipecat.frames.frames import LLMRunFrame
         await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
@@ -114,21 +119,47 @@ async def run_bot(transport: BaseTransport):
         logger.info("Caller disconnected")
         await task.cancel()
 
-    runner = PipelineRunner(handle_sigint=False)
+    runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
     await runner.run(task)
 
 
 async def bot(runner_args: RunnerArguments):
-    """Entry point — Pipecat Cloud calls this."""
-    transport = SmallWebRTCTransport(
-        webrtc_connection=runner_args.webrtc_connection,
-        params=TransportParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
-        ),
-    )
-    await run_bot(transport)
+    """Entry point — Pipecat Cloud calls this (2-step WhatsApp flow)."""
+    if isinstance(runner_args, PipecatSessionArguments):
+        # Step 1: Initial session start — wait for WebRTC connection
+        logger.info("Bot starting — waiting for WebRTC connection from WhatsApp")
+        try:
+            await session_manager.wait_for_webrtc()
+        except TimeoutError as e:
+            logger.error(f"Timeout waiting for WebRTC: {e}")
+            raise
+        return
+
+    elif isinstance(runner_args, SmallWebRTCSessionArguments):
+        # Step 2: WebRTC connection received — start pipeline
+        logger.info("WebRTC connection received — starting pipeline")
+        session_manager.cancel_timeout()
+
+        webrtc_connection: SmallWebRTCConnection = runner_args.webrtc_connection
+
+        try:
+            transport = SmallWebRTCTransport(
+                webrtc_connection=webrtc_connection,
+                params=TransportParams(
+                    audio_in_enabled=True,
+                    audio_out_enabled=True,
+                    vad_analyzer=SileroVADAnalyzer(),
+                ),
+            )
+
+            await run_bot(transport, runner_args)
+            logger.info("Bot session completed")
+
+        except Exception as e:
+            logger.exception(f"Error in bot: {e}")
+            raise
+        finally:
+            session_manager.complete_session()
 
 
 if __name__ == "__main__":
