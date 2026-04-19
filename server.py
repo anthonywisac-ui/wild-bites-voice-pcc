@@ -5,9 +5,7 @@ from fastapi import FastAPI, Request, HTTPException, Query
 from aiohttp import ClientSession
 from loguru import logger
 from pipecat.transports.whatsapp.client import WhatsAppClient
-
-# ✅ FIXED: Import the correct function name
-from bot import run_bot
+from bot import run_bot   # ← This is the key change: importing 'run_bot'
 
 app = FastAPI()
 whatsapp_client = None
@@ -50,7 +48,6 @@ async def whatsapp_webhook(request: Request):
         raise HTTPException(status_code=500, detail="WhatsApp client not initialized")
     
     try:
-        # ✅ CRITICAL: Pass the raw Request object, NOT parsed JSON
         webrtc_connection = await whatsapp_client.handle_webhook_request(request)
         
         if webrtc_connection:
@@ -64,3 +61,17 @@ async def whatsapp_webhook(request: Request):
         raise HTTPException(status_code=500, detail="Internal server error")
     
     return {"status": "ok"}
+
+# Add a 'bot' function that Pipecat Cloud expects as the entry point
+async def bot(runner_args):
+    """Entry point for Pipecat Cloud."""
+    from pipecat.runner.utils import create_transport
+    from pipecat.transports.base_transport import TransportParams
+    
+    transport = await create_transport(runner_args, {
+        "smallwebrtc": lambda: TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+        )
+    })
+    await run_bot(transport.webrtc_connection)
