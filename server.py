@@ -6,6 +6,7 @@ from aiohttp import ClientSession
 from loguru import logger
 from pipecat.transports.whatsapp.client import WhatsAppClient
 
+# ✅ FIXED: Import the correct function name
 from bot import run_bot
 
 app = FastAPI()
@@ -49,7 +50,7 @@ async def whatsapp_webhook(request: Request):
         raise HTTPException(status_code=500, detail="WhatsApp client not initialized")
     
     try:
-        # ✅ CRITICAL FIX: Pass the raw request object, NOT the parsed JSON body
+        # ✅ CRITICAL: Pass the raw Request object, NOT parsed JSON
         webrtc_connection = await whatsapp_client.handle_webhook_request(request)
         
         if webrtc_connection:
