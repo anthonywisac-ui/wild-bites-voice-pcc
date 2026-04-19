@@ -1,10 +1,10 @@
-# bot.py (Modified)
+# bot.py
 import os
 import sys
 from dotenv import load_dotenv
 from loguru import logger
 
-# ... (all your other imports remain the same)
+from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -14,32 +14,51 @@ from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.base_transport import TransportParams
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-# Import the context management frame
 from pipecat.frames.frames import LLMContextFrame
 
 load_dotenv()
 logger.remove()
 logger.add(sys.stdout, level="INFO")
 
+# Silence the noisy data-channel warnings (optional)
+logger.level("WARN")
+logger.add(lambda _: None, level="ERROR", filter=lambda r: "Data channel not ready" in r["message"])
+
 SYSTEM_PROMPT = """You are Alex, a friendly restaurant voice assistant.
 Keep responses under 25 words. Ask one question at a time.
-Start by greeting the caller and asking for their order.
-"""
+Start by greeting the caller and asking for their order."""
 
-# Change this function to accept the webrtc_connection as an argument
 async def run_bot(webrtc_connection):
     logger.info("Starting Wild Bites voice bot")
-    # ... (stt, llm, tts services initialization remains the same) ...
-
-    # The main difference is how the initial greeting is handled.
-    # You can set an initial system message, but the trigger for the bot to speak
-    # should be an LLMContextFrame, not an LLMRunFrame.
     
-    # Set up the context aggregators
+    transport = SmallWebRTCTransport(
+        webrtc_connection=webrtc_connection,
+        params=TransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+            # Increase audio timeout to avoid warnings
+            audio_in_timeout_secs=30.0,
+        ),
+    )
+    
+    stt = DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        model="nova-2-general",
+    )
+    
+    llm = GroqLLMService(
+        api_key=os.getenv("GROQ_API_KEY"),
+        model="llama-3.1-8b-instant",
+    )
+    
+    tts = DeepgramTTSService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        voice="aura-asteria-en",
+    )
+    
     context_aggregator = LLMContextAggregatorPair()
     
-    # Create the pipeline
     pipeline = Pipeline([
         transport.input(),
         stt,
@@ -50,21 +69,19 @@ async def run_bot(webrtc_connection):
         context_aggregator.assistant(),
     ])
     
-    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True, enable_metrics=True))
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            allow_interruptions=True,
+            enable_metrics=True,
+        ),
+    )
     
-    # Initial context for the LLM
-    initial_messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        # You can also add an initial assistant message here if you want
-        # {"role": "assistant", "content": "Hello! Thanks for calling Wild Bites, what can I get for you?"}
-    ]
-    
-    # Initialize the context aggregator with the initial messages
+    initial_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     await context_aggregator.assistant().set_context(initial_messages)
-    
-    # This is the correct way to kickstart the bot's speech
     await task.queue_frames([LLMContextFrame(initial_messages)])
     
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
+    
     logger.info("Voice bot ended")
