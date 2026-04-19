@@ -1,0 +1,6 @@
+agent_name = "wild-bites-voice"
+image = "YOUR_DOCKERHUB_USERNAME/wild-bites-voice:0.1"
+secret_set = "wild-bites-secrets"
+
+[scaling]
+    min_agents = 1

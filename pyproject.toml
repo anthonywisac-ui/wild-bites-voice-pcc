@@ -1,0 +1,19 @@
+[project]
+name = "wild-bites-voice"
+version = "0.1.0"
+description = "Wild Bites Restaurant voice ordering bot via WhatsApp Calling"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "pipecat-ai[webrtc,deepgram,groq,silero,whatsapp]>=0.0.90",
+    "pipecat-ai-small-webrtc-prebuilt>=1.0.0",
+    "pipecatcloud>=0.2.0",
+    "python-dotenv>=1.0.0",
+    "loguru>=0.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
